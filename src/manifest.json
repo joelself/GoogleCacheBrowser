@@ -1,0 +1,38 @@
+{
+    "name" : "Google Cache Browser",
+    "description" : "Turn all links into google cache links",
+    "version" : "2.4",
+    "permissions" : [
+        "activeTab",
+        "tabs",
+        "<all_urls>",
+		"storage",
+		"webRequest",
+		"webNavigation",
+		"webRequestBlocking"
+    ],
+	"content_scripts": [
+		{
+			"matches": ["https://*/*", "http://*/*", "*://*/*"],
+			"exclude_globs": ["https://chrome.google.com/webstore*, https://webcache.googleusercontent.com/*, http://webcache.googleusercontent.com/*"],
+			"js": ["404_watcher.js"],
+			"css": ["top_bar.css"],
+			"run_at": "document_start"
+		}
+	],
+    "browser_action" : {
+        "default_title" : "Browse exclusively from google's cache",
+        "default_icon" : "cache.png",
+		"default_popup" : "popup.html"
+    },
+    "icons" : {
+        "16" : "cache_16.png",
+        "48" : "cache_48.png",
+        "128" : "cache_128.png"
+    },
+	 "background": {
+		"scripts": ["background.js"]
+	},
+	"web_accessible_resources": ["tldjs.js"],
+    "manifest_version" : 2
+}
