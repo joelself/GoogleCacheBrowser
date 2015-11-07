@@ -137,7 +137,7 @@ function execute(code) {
 		console.error(e);
 	}
 	if (document.getElementById('googleCacheBrowserTopBar') == null) {
-		injectPageContent(window.location.href);
+		waitToRun();
 	}
 }
 

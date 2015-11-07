@@ -2,34 +2,6 @@ var tabsRedirecting = [];
 var tabsActivated = [];
 var tabsActivatedExpression = [];
 var tabsGoingBack = [];
-var currentUserId = '';
-
-function getRandomToken() {
-    // E.g. 8 * 32 = 256 bits token
-    var randomPool = new Uint8Array(32), hex, i;
-    crypto.getRandomValues(randomPool);
-    hex = '';
-    for (i = 0; i < randomPool.length; ++i) {
-        hex += randomPool[i].toString(16);
-    }
-    // E.g. db18458e2782b2b77e36769c569e263a53885a9944dd0a861e5064eac16f1a
-    return hex;
-}
-
-chrome.storage.sync.get('userid', function (items) {
-    var userid = items.userid;
-    function useToken(userid) {
-        currentUserId = userid;
-    }
-    if (userid) {
-        useToken(userid);
-    } else {
-        userid = getRandomToken();
-        chrome.storage.sync.set({userid: userid}, function () {
-            useToken(userid);
-        });
-    }
-});
 
 chrome.tabs.onActivated.addListener(function (activeInfo) {
 	'use strict';
@@ -78,87 +50,160 @@ function pageUpdatedEventListener(tabId, changeInfo, tab) {
 	if (regex.test(href)) {
 		chrome.tabs.executeScript(tab.id, {
 			code : 'try{Object.defineProperty(window, \'googleCacheBrowserRegex\', {value: "' + regex + '"});}catch(ex){}'
-		});
-		chrome.tabs.executeScript(tab.id, {
-			file : 'cachify_links.js'
 		},
 			function () {
+				chrome.tabs.executeScript(tab.id, {
+					file : 'cachify_links.js'
+				},
+					function () {
+						if (chrome.runtime.lastError) {
+							return;
+						}
+					});
 				if (chrome.runtime.lastError) {
-					console.error(chrome.runtime.lastError.message);
+					return;
 				}
 			});
 	}
 }
 
-function removeEventListener() {
-	if (tabsActivated.length == 0) {
-		chrome.tabs.onUpdated.removeListener(pageUpdatedEventListener);
-		/*global redirectToCache*/
-		chrome.webRequest.onBeforeRequest.removeListener(redirectToCache);
-	}
-}
-
 function activateTab(tabId, regex) {
+	if (tabsActivated.length == 0) {
+		/*global onRemoved*/
+		chrome.tabs.onRemoved.addListener(onRemoved);
+		/*global onReplaced*/
+		chrome.tabs.onReplaced.addListener(onReplaced);
+		chrome.tabs.onUpdated.addListener(pageUpdatedEventListener);
+		/*global onCompleted*/
+		chrome.webRequest.onCompleted.addListener(onCompleted, {urls: ['http://*/*', 'https://*/*'], types: ['main_frame']});
+	}
 	tabsActivated.push(tabId);
 	tabsActivatedExpression.push(regex);
 }
 
 function deactivateTab(tabId) {
-	removeEventListener();
 	var tabIndex = tabsActivated.indexOf(tabId);
 	tabsActivated.splice(tabIndex, 1);
 	tabsActivatedExpression.splice(tabIndex, 1);
+	if (tabsActivated.length == 0) {
+		chrome.tabs.onRemoved.removeListener(onRemoved);
+		chrome.tabs.onReplaced.removeListener(onReplaced);
+		chrome.tabs.onUpdated.removeListener(pageUpdatedEventListener);
+		/*global redirectToCache*/
+		chrome.webNavigation.onCommitted.removeListener(redirectToCache);
+	}
 }
 
-function addPageUpdatedListener() {
-	chrome.tabs.onUpdated.addListener(pageUpdatedEventListener);
+function onReplaced(addedTabId, removedTabId) {
+	if (tabsActivated.indexOf(removedTabId) > -1) {
+		deactivateTab(removedTabId);
+	}
+}
+
+function onRemoved(addedTabId, removedTabId) {
+	if (tabsActivated.indexOf(removedTabId) > -1) {
+		deactivateTab(removedTabId);
+	}
+}
+
+function redirect(details) {
+	var href = details.url, matches;
+	tabsRedirecting.push(details.tabId);
+	if ((matches = /https?:\/\/webcache.googleusercontent.com\/search\?q=cache(?::|(?:%3A))(.*)/ig.exec(href)) == null &&
+			/https?:\/\/web\.archive\.org\/web\/.*/ig.exec(href) == null) {
+		matches = /(https?).*/gi.exec(href);
+		href = matches[1] + '://webcache.googleusercontent.com/search?q=cache:' + encodeURIComponent(href);
+		chrome.tabs.update(details.tabId, {
+			url: href
+		});
+	}
 }
 
 function redirectToCache(details) {
 	var tabIndex, href, regex, matches;
-	if (details.frameId == 0 && tabsRedirecting.indexOf(details.tabId) < 0) {
+	if (details.frameId == 0 && tabsRedirecting.indexOf(details.tabId) < 0 && details.transitionQualifiers.indexOf("forward_back") < 0) {
 		if ((tabIndex = tabsActivated.indexOf(details.tabId)) > -1) {
 			regex = new RegExp(tabsActivatedExpression[tabIndex].replace(/^\/|\/$/g, ''));
 			if (regex.test(details.url)) {
-				href = details.url;
-				tabsRedirecting.push(details.tabId);
-				if ((matches = /https?:\/\/webcache.googleusercontent.com\/search\?q=cache(?::|(?:%3A))(.*)/ig.exec(href)) == null) {
-					matches = /(https?).*/gi.exec(href);
-					href = matches[1] + '://webcache.googleusercontent.com/search?q=cache:' + encodeURIComponent(href);
-					chrome.tabs.update(details.tabId, {
-						url: href
-					});
-				}
+				redirect(details);
 			}
 		}
 	}
 }
 
 function notFoundListener(details) {
+	var matches, href, xhr, response, tabIndex;
 	if (details.type == 'main_frame' || details.type == 'sub_frame') {
-		if (details.statusCode == 404 || details.statusCode == 503) {
+		if (details.statusCode == 404 || details.statusCode == 503/*|| details.url.indexOf("webcache.googleusercontent.com/search") > -1*/) {
 			if (details.url.search(/https?:\/\/webcache.googleusercontent.com\/search\?q=cache(?::|(?:%3A))(.*)/gi) < 0) {
 				chrome.tabs.executeScript(details.tabId, {
 					file : 'injector.js'
 				},
 					function () {
 						if (chrome.runtime.lastError) {
-							console.error(chrome.runtime.lastError.message);
+							return;
 						}
 					});
+			} else if ((tabIndex = tabsActivated.indexOf(details.tabId)) > -1) {
+				// Try the wayback machine
+				chrome.tabs.executeScript(details.tabId, {
+					code : 'try{Object.defineProperty(window, \'spinnerPath\', {value: \'' + chrome.extension.getURL('spinner_128.gif') + '\'});}catch(ex){}'
+				},
+					function () {
+						if (chrome.runtime.lastError) {
+							console.log('ERROR: ' + chrome.runtime.lastError.message);
+						}
+					});
+				chrome.tabs.executeScript(details.tabId, {
+					file: 'show_spinner.js'
+				},
+					function () {
+						if (chrome.runtime.lastError) {
+							return;
+						}
+					});
+				matches = /https?:\/\/webcache.googleusercontent.com\/search\?q=cache(?::|(?:%3A))(.*)/ig.exec(details.url);
+				xhr = new XMLHttpRequest();
+				xhr.open("GET", "http://archive.org/wayback/available?url=" + matches[1], true);
+				xhr.onreadystatechange = function () {
+					if (xhr.readyState == 4) {
+						response = JSON.parse(xhr.responseText);
+						if (response.archived_snapshots.closest != undefined) {
+							chrome.tabs.update(details.tabId, {
+								url: response.archived_snapshots.closest.url
+							});
+						} else {
+							chrome.tabs.executeScript(details.tabId, {
+								code:   'document.getElementById("googleCacheBrowserSpinner").parentElement.removeChild(document.getElementById("googleCacheBrowserSpinner"));\n' +
+										'document.getElementById("googleCacheBrowserTitle").innerHTML = "Page Not Found in Internet Archive: Wayback Machine"\n' +
+									   '//# sourceURL=removeSpinner.js\n'
+							},
+								function () {
+									if (chrome.runtime.lastError) {
+										return;
+									}
+								});
+						}
+					}
+				};
+				xhr.send();
 			}
 		}
 	}
 }
 
-function forwardBackEventListener(details) {
+function onCompleted(details) {
+	notFoundListener(details);
+}
+
+function historyUpdatedListener(details) {
 	var tabIndex, href, matches;
 	if ((tabIndex = tabsActivated.indexOf(details.tabId)) > -1) {
 		if ((tabIndex = tabsGoingBack.indexOf(details.tabId)) > -1) {
 			if ((matches = /https?:\/\/webcache.googleusercontent.com\/search\?q=cache(?::|(?:%3A))(.*)/ig.exec(details.url)) != null) {
 				tabsGoingBack.splice(tabIndex, 1);
 				if (tabsGoingBack.length == 0) {
-					chrome.webNavigation.onHistoryStateUpdated.removeListener(forwardBackEventListener);
+					chrome.webNavigation.onHistoryStateUpdated.removeListener(historyUpdatedListener);
 				}
 				href = decodeURIComponent(matches[1]);
 				chrome.browserAction.setBadgeText({ 'text': '' });
@@ -176,9 +221,10 @@ function forwardBackEventListener(details) {
 
 function onExtensionButtonClicked(tab) {
     'use strict';
-	var exception, href, regex, tabIndex, value, matches;
+	var exception, href, regex, tabIndex, value, matches, i;
 	if ((tabIndex = tabsActivated.indexOf(tab.id)) > -1) {
-		if ((matches = /https?:\/\/webcache.googleusercontent.com\/search\?q=cache(?::|(?:%3A))(.*)/ig.exec(tab.url)) != null) {
+		if ((matches = /https?:\/\/webcache.googleusercontent.com\/search\?q=cache(?::|(?:%3A))(.*)/ig.exec(tab.url)) != null ||
+			    (matches = /https?:\/\/web\.archive\.org\/web\/[0-9]*?\/(.*)/ig.exec(tab.url)) != null) {
 			href = decodeURIComponent(matches[1]);
 			chrome.browserAction.setBadgeText({ 'text': '' });
 			deactivateTab(tab.id);
@@ -192,27 +238,35 @@ function onExtensionButtonClicked(tab) {
 			/*Some weird behavior. When you load a cached page it redirects to
 			 http://webcache.googleusercontent.com/ while still somehow showing the previous page*/
 			tabsGoingBack.push(tab.id);
-			chrome.webNavigation.onHistoryStateUpdated.addListener(forwardBackEventListener);
+			chrome.webNavigation.onHistoryStateUpdated.addListener(historyUpdatedListener);
 			chrome.tabs.executeScript(tab.id, {
 				code : 'window.history.back();'
-			});
+			},
+				function () {
+					if (chrome.runtime.lastError) {
+						return;
+					}
+				});
 		}
 	} else {
 		activateTab(tab.id, '.*');
 		chrome.tabs.executeScript(tab.id, {
 			code : 'try{Object.defineProperty(window, \'googleCacheBrowserRegex\', {value: \'.*\'});}catch(ex){}'
-		});
-		chrome.tabs.executeScript(tab.id, {
-			file : 'cachify_links.js'
 		},
 			function () {
-				if (chrome.runtime.lastError) {
-					console.error(chrome.runtime.lastError.message);
+				if (!chrome.runtime.lastError) {
+					chrome.tabs.executeScript(tab.id, {
+						file : 'cachify_links.js'
+					},
+						function () {
+							if (chrome.runtime.lastError) {
+								return;
+							}
+						});
 				}
 			});
-		addPageUpdatedListener();
 		chrome.browserAction.setBadgeText({ 'text': 'ON' });
-		chrome.webRequest.onBeforeRequest.addListener(redirectToCache,
+		chrome.webNavigation.onCommitted.addListener(redirectToCache,
 			{urls: ['http://*/*', 'https://*/*'], types: ['main_frame', 'sub_frame']},
 			['blocking']);
 		if (tab.url.search(/(https)?:\/\/webcache.googleusercontent.com\/search\?q=cache(?::|(?:%3A))(.*)/gi) < 0) {
@@ -233,8 +287,7 @@ function onExtensionButtonClicked(tab) {
 function viewCachedLocation(request, sender) {
 	var value = {}, href, matches;
 	activateTab(sender.tab.id, request.urlRegEx);
-	addPageUpdatedListener();
-	chrome.webRequest.onBeforeRequest.addListener(redirectToCache,
+	chrome.webNavigation.onCommitted.addListener(redirectToCache,
 		{urls: ['http://*/*', 'https://*/*'], types: ['main_frame', 'sub_frame']},
 		['blocking']);
 	matches = /(https?).*/gi.exec(sender.tab.url);
@@ -255,8 +308,3 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
 		onExtensionButtonClicked(request.tab);
 	}
 });
-
-chrome.webRequest.onCompleted.addListener(function (details) {
-	notFoundListener(details);
-}, {urls: ['http://*/*', 'https://*/*'], types: ['main_frame']}
-	);

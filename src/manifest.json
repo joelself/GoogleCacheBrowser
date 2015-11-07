@@ -1,15 +1,16 @@
 {
     "name" : "Google Cache Browser",
-    "description" : "Turn all links into google cache links",
-    "version" : "2.4",
+    "description" : "Turn all links into Google Cache links. If a page isn't found in the Google Cache the extension tries to find the page in the Internet Archive: Wayback Machine.",
+    "version" : "2.8",
     "permissions" : [
         "activeTab",
         "tabs",
-        "<all_urls>",
-		"storage",
+        "https://*/*",
+		"http://*/*",
 		"webRequest",
 		"webNavigation",
-		"webRequestBlocking"
+		"webRequestBlocking",
+		"storage"
     ],
 	"content_scripts": [
 		{
@@ -33,6 +34,6 @@
 	 "background": {
 		"scripts": ["background.js"]
 	},
-	"web_accessible_resources": ["tldjs.js"],
+	"web_accessible_resources": ["tldjs.js", "spinner_128.gif"],
     "manifest_version" : 2
 }
