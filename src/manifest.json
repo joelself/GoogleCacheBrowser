@@ -1,6 +1,6 @@
 {
     "name" : "Google Cache Browser",
-    "description" : "Turn all links into Google Cache links. If a page isn't found in the Google Cache the extension tries to find the page in the Internet Archive: Wayback Machine.",
+    "description" : "Turn all links into Google Cache links. It falls back to the Internet Archive: Wayback Machine when a cached page isn't found.",
     "version" : "2.8",
     "permissions" : [
         "activeTab",
