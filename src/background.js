@@ -151,7 +151,7 @@ function notFoundListener(details) {
 				},
 					function () {
 						if (chrome.runtime.lastError) {
-							console.log('ERROR: ' + chrome.runtime.lastError.message);
+							return;
 						}
 					});
 				chrome.tabs.executeScript(details.tabId, {
