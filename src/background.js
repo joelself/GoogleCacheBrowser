@@ -74,8 +74,6 @@ function activateTab(tabId, regex) {
 		/*global onReplaced*/
 		chrome.tabs.onReplaced.addListener(onReplaced);
 		chrome.tabs.onUpdated.addListener(pageUpdatedEventListener);
-		/*global onCompleted*/
-		chrome.webRequest.onCompleted.addListener(onCompleted, {urls: ['http://*/*', 'https://*/*'], types: ['main_frame']});
 	}
 	tabsActivated.push(tabId);
 	tabsActivatedExpression.push(regex);
@@ -308,3 +306,5 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
 		onExtensionButtonClicked(request.tab);
 	}
 });
+
+chrome.webRequest.onCompleted.addListener(onCompleted, {urls: ['http://*/*', 'https://*/*'], types: ['main_frame']});
